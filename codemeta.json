@@ -1,0 +1,57 @@
+{
+  "@context": "https://doi.org/10.5063/schema/codemeta-2.0",
+  "@type": "SoftwareSourceCode",
+  "name": "The Dice Within the Machine — K.516f Prototype",
+  "description": "Reference implementation of the R-C-M-R framework ⟨Σ, P, Φ, γ⟩ applied to Mozart's Musikalisches Würfelspiel K.516f (1792). Generates MIDI + WAV under two probability distributions (uniform, historical triangular) and empirically validates the specification entropy reported in the accompanying article.",
+  "identifier": "https://doi.org/10.5281/zenodo.PLACEHOLDER",
+  "codeRepository": "https://zenodo.org/records/PLACEHOLDER",
+  "license": "https://spdx.org/licenses/MIT",
+  "version": "1.0.0",
+  "datePublished": "2026-04-24",
+  "programmingLanguage": [
+    { "@type": "ComputerLanguage", "name": "Python", "version": "3.8+" }
+  ],
+  "runtimePlatform": "Python 3",
+  "softwareRequirements": ["numpy>=1.20"],
+  "keywords": [
+    "musicology",
+    "digital humanities",
+    "generative music",
+    "ars combinatoria",
+    "algorithmic composition",
+    "Mozart",
+    "K.516f",
+    "information theory",
+    "Shannon entropy"
+  ],
+  "author": [
+    {
+      "@type": "Person",
+      "givenName": "Eun Ji",
+      "familyName": "Park",
+      "email": "dr.rosyrosys@gmail.com",
+      "affiliation": {
+        "@type": "Organization",
+        "name": "Seoul National University / Yonsei University"
+      }
+    }
+  ],
+  "isPartOf": {
+    "@type": "ScholarlyArticle",
+    "name": "The Dice Within the Machine: A Historical-Computational Reading of Musical Combinatorics from Mozart to Generative AI",
+    "isPartOf": {
+      "@type": "PublicationIssue",
+      "isPartOf": {
+        "@type": "PublicationVolume",
+        "isPartOf": {
+          "@type": "Periodical",
+          "name": "Digital Scholarship in the Humanities",
+          "publisher": {
+            "@type": "Organization",
+            "name": "Oxford University Press"
+          }
+        }
+      }
+    }
+  }
+}

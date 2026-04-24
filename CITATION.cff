@@ -1,0 +1,34 @@
+cff-version: 1.2.0
+message: "If you use this prototype, please cite both the software and the accompanying article."
+type: software
+title: "The Dice Within the Machine — K.516f Prototype"
+abstract: "Reference implementation of the R-C-M-R framework ⟨Σ, P, Φ, γ⟩ applied to Mozart's Musikalisches Würfelspiel K.516f (1792), including a pure-Python generator, additive synthesiser, and empirical specification-entropy validation."
+authors:
+  - family-names: "Park"
+    given-names: "Eun Ji"
+    email: "dr.rosyrosys@gmail.com"
+    affiliation: "Seoul National University; Yonsei University"
+version: "1.0.0"
+date-released: "2026-04-24"
+license: MIT
+license-url: "https://opensource.org/licenses/MIT"
+repository-code: "https://zenodo.org/records/PLACEHOLDER"
+doi: "10.5281/zenodo.PLACEHOLDER"
+keywords:
+  - musicology
+  - generative music
+  - ars combinatoria
+  - algorithmic composition
+  - Mozart
+  - information theory
+preferred-citation:
+  type: article
+  title: "The Dice Within the Machine: A Historical-Computational Reading of Musical Combinatorics from Mozart to Generative AI"
+  authors:
+    - family-names: "Park"
+      given-names: "Eun Ji"
+  journal: "Digital Scholarship in the Humanities"
+  year: 2026
+  publisher:
+    name: "Oxford University Press"
+  notes: "Forthcoming"

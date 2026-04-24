@@ -1,0 +1,23 @@
+{
+  "combinatorial_space": {
+    "value": 759499667166482,
+    "scientific": "7.5950e+14",
+    "log2": 49.432042660922164
+  },
+  "theoretical": {
+    "uniform_bits": 49.432,
+    "triangular_bits": 46.8416
+  },
+  "monte_carlo": {
+    "n_samples": 1000000,
+    "uniform_bits": 49.4319,
+    "triangular_bits": 46.8433,
+    "absolute_error_uniform": 0.0001,
+    "absolute_error_triangular": 0.0017
+  },
+  "section3_cross_check": {
+    "paper_reported_bits": 46.842,
+    "generator_triangular_bits": 46.8433,
+    "within_mc_noise_of_paper": true
+  }
+}
