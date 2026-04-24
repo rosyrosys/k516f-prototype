@@ -1,15 +1,14 @@
 # The Dice Within the Machine — K.516f Prototype
 
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.19726871.svg)](https://doi.org/10.5281/zenodo.19726871)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.19727020.svg)](https://doi.org/10.5281/zenodo.19727020)
 
 A reference implementation of the R-C-M-R framework
 ⟨Σ, P, Φ, γ⟩ applied to Mozart's *Musikalisches Würfelspiel*
 K.516f (Simrock, Bonn 1792).
 
-This repository accompanies the article **"The Dice Within the
-Machine: A Historical-Computational Reading of Musical Combinatorics
-from Mozart to Generative AI"** (Park, *Digital Scholarship in the
-Humanities*, submitted 2026).
+This repository accompanies the article "The Dice Within the Machine:
+A Historical-Computational Reading of Musical Combinatorics from
+Mozart to Generative AI" (Park, preprint, under peer review, 2026).
 
 It instantiates the article's formal quadruple as a runnable Python
 package and produces three audible artefacts (uniform-P, triangular-P,
