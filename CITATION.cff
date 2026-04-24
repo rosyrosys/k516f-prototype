@@ -7,7 +7,7 @@ authors:
   - family-names: "Park"
     given-names: "Eun Ji"
     email: "dr.rosyrosys@gmail.com"
-    affiliation: "Seoul National University; Yonsei University"
+    affiliation: "Seoul National University
 version: "1.0.0"
 date-released: "2026-04-24"
 license: MIT
@@ -21,14 +21,11 @@ keywords:
   - algorithmic composition
   - Mozart
   - information theory
-preferred-citation:
+referred-citation:
   type: article
   title: "The Dice Within the Machine: A Historical-Computational Reading of Musical Combinatorics from Mozart to Generative AI"
   authors:
     - family-names: "Park"
       given-names: "Eun Ji"
-  journal: "Digital Scholarship in the Humanities"
   year: 2026
-  publisher:
-    name: "Oxford University Press"
-  notes: "Forthcoming"
+  notes: "Preprint, under peer review."
