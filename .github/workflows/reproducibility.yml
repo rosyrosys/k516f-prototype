@@ -1,0 +1,93 @@
+name: reproducibility
+
+# Runs on every push and pull request. Three checks:
+#   1. The generator produces structurally valid MIDI under both
+#      probability distributions.
+#   2. The Monte-Carlo entropy cross-check reproduces the 46.842-bit
+#      figure reported in §5 of the accompanying article within
+#      |Δ| ≤ 0.01 (1,000,000-sample run).
+#   3. The combinatorial space equals exactly 759,499,667,166,482.
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.9", "3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Generator smoke-test (MIDI)
+        run: |
+          python src/generator.py --dist triangular --seed 42 --out /tmp/t.mid
+          python src/generator.py --dist uniform    --seed 42 --out /tmp/u.mid
+          python -c "
+          import sys
+          for f in ['/tmp/t.mid', '/tmp/u.mid']:
+              d = open(f, 'rb').read()
+              assert d[:4] == b'MThd', f
+              assert d[14:18] == b'MTrk', f
+          print('MIDI header check: OK')
+          "
+
+      - name: Synthesiser smoke-test (WAV)
+        run: |
+          python src/synth.py --dist triangular --seed 42 --out /tmp/t.wav
+          python -c "
+          import wave
+          with wave.open('/tmp/t.wav') as w:
+              assert w.getframerate() == 44100
+              assert w.getnchannels() == 1
+              assert w.getsampwidth() == 2
+              assert w.getnframes() / w.getframerate() > 25  # ≥ 25 s
+          print('WAV check: OK')
+          "
+
+      - name: Combinatorial space == 7.595 × 10¹⁴ exactly
+        run: |
+          python -c "
+          import sys
+          sys.path.insert(0, 'src')
+          from bars import OPTIONS_PER_BAR
+          import functools, operator
+          n = functools.reduce(operator.mul, OPTIONS_PER_BAR, 1)
+          assert n == 759_499_667_166_482, n
+          print(f'|Σ| = {n:,}  OK')
+          "
+
+      - name: Specification entropy (MC) within |Δ| ≤ 0.01 of 46.842 bits
+        run: |
+          python src/entropy_validation.py > /tmp/ev.log
+          python -c "
+          import json
+          r = json.load(open('outputs/entropy_validation.json'))
+          H = r['monte_carlo']['triangular_bits']
+          paper = 46.842
+          assert abs(H - paper) <= 0.01, (H, paper)
+          print(f'H_triangular = {H}  |Δ| = {abs(H - paper):.4f}  OK')
+          "
+
+      - name: Upload reproducibility artefacts
+        if: matrix.python-version == '3.11'
+        uses: actions/upload-artifact@v4
+        with:
+          name: k516f-reproducibility-artefacts
+          path: |
+            outputs/*.mid
+            outputs/*.wav
+            outputs/entropy_validation.json
+            outputs/entropy_validation.txt
