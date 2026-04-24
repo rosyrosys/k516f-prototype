@@ -1,5 +1,7 @@
 # The Dice Within the Machine — K.516f Prototype
 
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.19726871.svg)](https://doi.org/10.5281/zenodo.19726871)
+
 A reference implementation of the R-C-M-R framework
 ⟨Σ, P, Φ, γ⟩ applied to Mozart's *Musikalisches Würfelspiel*
 K.516f (Simrock, Bonn 1792).
