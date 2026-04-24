@@ -90,10 +90,8 @@ International (CC BY 4.0). See `LICENSE` and `LICENSE-data`.
 
 ---
 
-**Author.**  Eun Ji Park, Seoul National University / Yonsei
-University.  <dr.rosyrosys@gmail.com>
+**Author.**  Eun Ji Park, Seoul National University <dr.rosyrosys@gmail.com>
 
-**Paper.**  Park, E. J. (2026). The Dice Within the Machine: A
+**Paper.**  Park, E. J. (2026). *The Dice Within the Machine: A
 Historical-Computational Reading of Musical Combinatorics from Mozart
-to Generative AI.  *Digital Scholarship in the Humanities*,
-forthcoming.
+to Generative AI.* Manuscript under peer review.
