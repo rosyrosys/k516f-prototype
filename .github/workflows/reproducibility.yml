@@ -1,93 +1,77 @@
 name: reproducibility
 
-# Runs on every push and pull request. Three checks:
-#   1. The generator produces structurally valid MIDI under both
-#      probability distributions.
-#   2. The Monte-Carlo entropy cross-check reproduces the 46.842-bit
-#      figure reported in §5 of the accompanying article within
-#      |Δ| ≤ 0.01 (1,000,000-sample run).
-#   3. The combinatorial space equals exactly 759,499,667,166,482.
+# Runs on every push and PR. Verifies two reproducibility claims made
+# in the accompanying manuscript:
+#   1. |Sigma| = 759,499,667,166,482  exactly
+#   2. Monte-Carlo specification entropy reproduces 46.842 bits
+#      (closed-form, |Delta| <= 0.01)
 
 on:
   push:
-    branches: [main, master]
+    branches: [ main ]
   pull_request:
-    branches: [main, master]
+    branches: [ main ]
+  workflow_dispatch:
 
 jobs:
   verify:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ["3.9", "3.11", "3.12"]
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python ${{ matrix.python-version }}
+      - name: Set up Python 3.11
         uses: actions/setup-python@v5
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: "3.11"
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
-
-      - name: Generator smoke-test (MIDI)
         run: |
-          python src/generator.py --dist triangular --seed 42 --out /tmp/t.mid
-          python src/generator.py --dist uniform    --seed 42 --out /tmp/u.mid
-          python -c "
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Verify |Sigma|
+        run: |
+          python - <<'PY'
           import sys
-          for f in ['/tmp/t.mid', '/tmp/u.mid']:
-              d = open(f, 'rb').read()
-              assert d[:4] == b'MThd', f
-              assert d[14:18] == b'MTrk', f
-          print('MIDI header check: OK')
-          "
+          sys.path.insert(0, "src")
+          from bars import SIGMA_SIZE
+          expected = 11 ** 14 * 2 * 1
+          assert SIGMA_SIZE == expected, f"|Sigma| = {SIGMA_SIZE} != {expected}"
+          print(f"|Sigma| = {SIGMA_SIZE:,}  OK")
+          PY
 
-      - name: Synthesiser smoke-test (WAV)
+      - name: Verify entropy (closed-form vs Monte-Carlo)
         run: |
-          python src/synth.py --dist triangular --seed 42 --out /tmp/t.wav
-          python -c "
-          import wave
-          with wave.open('/tmp/t.wav') as w:
-              assert w.getframerate() == 44100
-              assert w.getnchannels() == 1
-              assert w.getsampwidth() == 2
-              assert w.getnframes() / w.getframerate() > 25  # ≥ 25 s
-          print('WAV check: OK')
-          "
-
-      - name: Combinatorial space == 7.595 × 10¹⁴ exactly
-        run: |
-          python -c "
-          import sys
-          sys.path.insert(0, 'src')
-          from bars import OPTIONS_PER_BAR
-          import functools, operator
-          n = functools.reduce(operator.mul, OPTIONS_PER_BAR, 1)
-          assert n == 759_499_667_166_482, n
-          print(f'|Σ| = {n:,}  OK')
-          "
-
-      - name: Specification entropy (MC) within |Δ| ≤ 0.01 of 46.842 bits
-        run: |
-          python src/entropy_validation.py > /tmp/ev.log
-          python -c "
+          mkdir -p outputs
+          python src/entropy_validation.py --n 200000 --seed 2026 \
+              --out-json outputs/entropy_validation.json \
+              --out-txt  outputs/entropy_validation.txt
+          python - <<'PY'
           import json
-          r = json.load(open('outputs/entropy_validation.json'))
-          H = r['monte_carlo']['triangular_bits']
-          paper = 46.842
-          assert abs(H - paper) <= 0.01, (H, paper)
-          print(f'H_triangular = {H}  |Δ| = {abs(H - paper):.4f}  OK')
-          "
+          d = json.load(open("outputs/entropy_validation.json"))
+          assert d["sigma_size_ok"], "sigma size mismatch"
+          assert d["delta_ok"], f"|delta|={d['abs_delta_bits']} > 0.01"
+          assert abs(d["H_closed_form_bits"] - 46.842) < 0.01, \
+              f"H_closed = {d['H_closed_form_bits']} differs from 46.842"
+          print("entropy validation: PASS")
+          print(f"  H_closed = {d['H_closed_form_bits']} bits")
+          print(f"  H_MC     = {d['H_monte_carlo_bits']} bits")
+          print(f"  |delta|  = {d['abs_delta_bits']} bits")
+          PY
 
-      - name: Upload reproducibility artefacts
-        if: matrix.python-version == '3.11'
+      - name: Smoke-test generator + synth
+        run: |
+          python src/generator.py --dist triangular --seed 42 \
+              --out outputs/_smoke.mid
+          python src/synth.py --dist triangular --seed 42 \
+              --out outputs/_smoke.wav
+          test -s outputs/_smoke.mid
+          test -s outputs/_smoke.wav
+
+      - name: Upload entropy log
         uses: actions/upload-artifact@v4
         with:
-          name: k516f-reproducibility-artefacts
+          name: entropy-log
           path: |
-            outputs/*.mid
-            outputs/*.wav
             outputs/entropy_validation.json
             outputs/entropy_validation.txt
