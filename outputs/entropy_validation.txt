@@ -1,16 +1,27 @@
 K.516f specification-entropy validation
-================================================
-Combinatorial space |Σ|    : 759,499,667,166,482
-                    |Σ|    ≈ 7.5950e+14
-                    log2   : 49.4320 bits
+============================================
+|Σ|              = 759,499,667,166,482
+|Σ| expected     = 759,499,667,166,482     OK=True
+distribution     = triangular
+H (closed form)  = 46.841627 bits
+H (Monte-Carlo)  = 46.838143 bits   (N = 200,000, seed = 2026)
+|Δ|              = 0.003484 bits   (threshold = 0.01)
+verdict          = PASS
 
-Theoretical per-bar distributions summed over 16 bars:
-  uniform    H = 49.4320 bits
-  triangular H = 46.8416 bits
-
-Monte Carlo (1,000,000 samples, seed=2026):
-  uniform    H̃ = 49.4319 bits  (|Δ| = 0.0001)
-  triangular H̃ = 46.8433 bits  (|Δ| = 0.0017)
-
-Paper §3 reports 46.842 bits for the triangular case.
-Generator yields 46.843 bits; within-MC agreement: YES
+per-bar contributions (bits):
+  bar  1: 3.274402
+  bar  2: 3.274402
+  bar  3: 3.274402
+  bar  4: 3.274402
+  bar  5: 3.274402
+  bar  6: 3.274402
+  bar  7: 3.274402
+  bar  8: 1.000000
+  bar  9: 3.274402
+  bar 10: 3.274402
+  bar 11: 3.274402
+  bar 12: 3.274402
+  bar 13: 3.274402
+  bar 14: 3.274402
+  bar 15: 3.274402
+  bar 16: -0.000000

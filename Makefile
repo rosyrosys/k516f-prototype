@@ -1,32 +1,47 @@
-# Makefile — K.516f prototype
-# Reproduces all archived artefacts from source in one command.
+# K.516f Prototype — build orchestration
 #
-#   make            same as `make all`
-#   make all        regenerate MIDI + WAV + entropy validation
-#   make midi       only the three MIDI files
-#   make wav        only the three WAV files
-#   make validate   only the Monte-Carlo entropy cross-check
-#   make clean      remove generated artefacts (keeps the folder)
+# Usage:
+#   make all       # regenerate every artefact
+#   make midi      # MIDI files only
+#   make audio     # WAV files only
+#   make entropy   # entropy validation log
+#   make clean     # remove outputs/
 
-PYTHON ?= python3
-OUT := outputs
+PY      := python3
+SRC     := src
+OUT     := outputs
 
-.PHONY: all midi wav validate clean
+.PHONY: all midi audio entropy clean help
 
-all: midi wav validate
+help:
+	@echo "make all      — regenerate all artefacts"
+	@echo "make midi     — MIDI generation"
+	@echo "make audio    — WAV synthesis"
+	@echo "make entropy  — entropy validation"
+	@echo "make clean    — remove outputs/"
 
-midi:
-	$(PYTHON) src/generator.py --dist triangular --seed 42   --out $(OUT)/k516f_triangular_seed42.mid
-	$(PYTHON) src/generator.py --dist uniform    --seed 42   --out $(OUT)/k516f_uniform_seed42.mid
-	$(PYTHON) src/generator.py --dist triangular --seed 1792 --out $(OUT)/k516f_triangular_seed1792.mid
+all: midi audio entropy
 
-wav:
-	$(PYTHON) src/synth.py --dist triangular --seed 42   --out $(OUT)/k516f_triangular_seed42.wav
-	$(PYTHON) src/synth.py --dist uniform    --seed 42   --out $(OUT)/k516f_uniform_seed42.wav
-	$(PYTHON) src/synth.py --dist triangular --seed 1792 --out $(OUT)/k516f_triangular_seed1792.wav
+midi: $(OUT)/k516f_triangular_seed42.mid \
+      $(OUT)/k516f_uniform_seed42.mid
 
-validate:
-	$(PYTHON) src/entropy_validation.py
+$(OUT)/k516f_triangular_seed42.mid:
+	$(PY) $(SRC)/generator.py --dist triangular --seed 42 --out $@
+
+$(OUT)/k516f_uniform_seed42.mid:
+	$(PY) $(SRC)/generator.py --dist uniform --seed 42 --out $@
+
+audio: $(OUT)/k516f_triangular_seed42.wav
+
+$(OUT)/k516f_triangular_seed42.wav:
+	$(PY) $(SRC)/synth.py --dist triangular --seed 42 --out $@
+
+entropy: $(OUT)/entropy_validation.json
+
+$(OUT)/entropy_validation.json:
+	$(PY) $(SRC)/entropy_validation.py \
+	    --out-json $(OUT)/entropy_validation.json \
+	    --out-txt  $(OUT)/entropy_validation.txt
 
 clean:
-	- rm $(OUT)/*.mid $(OUT)/*.wav $(OUT)/*.json $(OUT)/*.txt 2>/dev/null
+	rm -rf $(OUT)/*.mid $(OUT)/*.wav $(OUT)/entropy_validation.*

@@ -1,236 +1,163 @@
-/* app.js — browser port of generator + synth for the K.516f prototype.
+/* app.js — Browser-side K.516f generator for the GitHub Pages demo.
  *
- *   Runs entirely client-side, no build step, no external deps.
- *   Loads bars.json (the 11x16 modular alphabet Σ), implements the
- *   R-C-M-R framework's choice/assembly/render, plays via Web Audio.
+ * Mirrors src/generator.py: same alphabet, same triangular pmf, same
+ * archetypes (loaded from ./js/bars.json).
+ *
+ * Renders to Web Audio with a small inline fortepiano voice that
+ * approximates src/synth.py — additive partials with two-stage decay,
+ * inharmonicity, and stereo spread. The browser version trades some
+ * fidelity (no biquad soundboard formant) for code size.
+ *
+ * Wires up #playBtn / #seedInput / #distSelect on the host page if they
+ * exist; otherwise exposes window.k516f = { play, seedInput, ... } so
+ * the host page can drive it.
  */
 
-// ---------- state ----------
-let TABLE = null;           // loaded from bars.json
-let OPTIONS_PER_BAR = null; // loaded from bars.json
-let audioCtx = null;        // Web Audio context (lazy)
-let currentSource = null;   // current AudioBufferSourceNode
+(function () {
+  "use strict";
 
-// ---------- PRNG (mulberry32, seedable) ----------
-function mulberry32(seed) {
-  let t = seed >>> 0;
-  return function () {
-    t += 0x6D2B79F5;
-    let r = t;
-    r = Math.imul(r ^ (r >>> 15), r | 1);
-    r ^= r + Math.imul(r ^ (r >>> 7), r | 61);
-    return ((r ^ (r >>> 14)) >>> 0) / 4294967296;
-  };
-}
+  let BARS = null;
+  let audioCtx = null;
 
-function randint(rng, lo, hi) {  // inclusive on both ends
-  return lo + Math.floor(rng() * (hi - lo + 1));
-}
-
-// ---------- P (distribution slot) ----------
-function chooseBarIndex(barPosition, dist, rng) {
-  const n = OPTIONS_PER_BAR[barPosition - 1];
-  if (dist === 'uniform') {
-    return Math.floor(rng() * n);
+  // ------------------------------------------------------------------ data
+  async function loadBars() {
+    if (BARS) return BARS;
+    const res = await fetch("./js/bars.json");
+    BARS = await res.json();
+    return BARS;
   }
-  if (dist === 'triangular') {
-    const s = randint(rng, 1, 6) + randint(rng, 1, 6);  // 2..12
-    let idx = s - 2;                                     // 0..10
-    if (idx >= n) idx = idx % n;
-    return idx;
-  }
-  throw new Error('unknown distribution ' + dist);
-}
 
-// ---------- γ (composition operator) ----------
-function assemble(indices) {
-  const mel = [];
-  const bass = [];
-  let t = 0.0;
-  for (let bar = 0; bar < 16; bar++) {
-    const opt = TABLE[bar][indices[bar]];
-    let bt = t;
-    for (const [pitch, dur] of opt.melody) {
-      mel.push({ start: bt, pitch, dur });
-      bt += dur;
+  // ------------------------------------------------------------------ rng
+  // Mulberry32 — deterministic, matches numpy default_rng spectrum
+  // approximately enough for a *demo*; exact reproducibility lives in
+  // the Python reference.
+  function mulberry32(seed) {
+    let a = seed >>> 0;
+    return function () {
+      a = (a + 0x6D2B79F5) >>> 0;
+      let t = a;
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  function sample(rng, pmf) {
+    const u = rng();
+    let acc = 0;
+    for (let i = 0; i < pmf.length; i++) {
+      acc += pmf[i];
+      if (u < acc) return i;
     }
-    bt = t;
-    for (const [pitch, dur] of opt.bass) {
-      bass.push({ start: bt, pitch, dur });
-      bt += dur;
+    return pmf.length - 1;
+  }
+
+  function pmfFor(barPos, dist, k) {
+    if (dist === "triangular" && k === 11) return BARS.triangular_11;
+    if (dist === "triangular" && k === 2)  return [0.5, 0.5];
+    if (dist === "triangular" && k === 1)  return [1.0];
+    return Array(k).fill(1 / k);
+  }
+
+  function generate(dist, seed) {
+    const rng = mulberry32(seed);
+    const chosen = [];
+    const mel = [];
+    const bass = [];
+    for (let bp = 1; bp <= BARS.n_bars; bp++) {
+      const feasible = BARS.alphabet_at[String(bp)];
+      const k = feasible.length;
+      const pmf = pmfFor(bp, dist, k);
+      const idx = feasible[sample(rng, pmf)];
+      chosen.push(idx);
+      const offset = (bp - 1) * BARS.time_sig[0];
+      for (const [s, p, d] of BARS.mel_archetypes[idx])
+        mel.push([offset + s, p, d]);
+      for (const [s, p, d] of BARS.bass_archetypes[idx])
+        bass.push([offset + s, p, d]);
     }
-    t += 3.0;  // 3/4 bar
+    return { chosen, mel, bass };
   }
-  return { mel, bass };
-}
 
-function generate(dist, seed) {
-  const rng = mulberry32(seed);
-  const indices = [];
-  for (let i = 1; i <= 16; i++) indices.push(chooseBarIndex(i, dist, rng));
-  const { mel, bass } = assemble(indices);
-  return { indices, mel, bass };
-}
+  // ------------------------------------------------------------------ synth
+  function midiToHz(m) { return 440 * Math.pow(2, (m - 69) / 12); }
 
-// ---------- additive synth (mirrors Python src/synth.py) ----------
-const SAMPLE_RATE = 44100;
-const BPM = 100;                           // matches TEMPO_MICROSEC_PER_QUARTER = 600_000
-const SEC_PER_BEAT = 60 / BPM;
-const HARMONICS = [1.00, 0.50, 0.33, 0.22, 0.14, 0.09, 0.06];
+  function scheduleNote(ctx, when, pitch, durBeats, secPerBeat, gain) {
+    const f0 = midiToHz(pitch);
+    const dur = durBeats * secPerBeat;
+    const out = ctx.createGain();
+    out.gain.value = gain;
+    out.connect(ctx.destination);
 
-function midiToHz(m) { return 440 * Math.pow(2, (m - 69) / 12); }
+    const weights = [0.55, 0.95, 0.70, 0.45, 0.32, 0.22, 0.16, 0.11, 0.08, 0.05];
+    const B = 4e-4;
 
-function renderNote(pitch, durSec, buf, startIdx) {
-  const f0 = midiToHz(pitch);
-  const nSamples = Math.min(Math.floor(durSec * SAMPLE_RATE),
-                            buf.length - startIdx);
-  if (nSamples <= 0) return;
-  const attack = Math.min(Math.floor(0.005 * SAMPLE_RATE), nSamples);
-  for (let i = 0; i < nSamples; i++) {
-    const t = i / SAMPLE_RATE;
-    let env = Math.exp(-t / 0.6);
-    if (i < attack) env *= i / attack;
-    let s = 0;
-    for (let h = 0; h < HARMONICS.length; h++) {
-      const w = HARMONICS[h];
-      s += w * Math.sin(2 * Math.PI * f0 * (h + 1) * t);
+    for (let i = 1; i <= weights.length; i++) {
+      const f = i * f0 * Math.sqrt(1 + B * i * i);
+      const osc = ctx.createOscillator();
+      const env = ctx.createGain();
+      const pan = ctx.createStereoPanner ? ctx.createStereoPanner() : null;
+      osc.type = "sine";
+      osc.frequency.value = f;
+      const w = weights[i - 1];
+      env.gain.setValueAtTime(0.0, when);
+      env.gain.linearRampToValueAtTime(w, when + 0.008);
+      // two-stage decay
+      env.gain.exponentialRampToValueAtTime(Math.max(0.001, w * 0.4),
+                                             when + 0.10);
+      env.gain.exponentialRampToValueAtTime(0.001,
+                                             when + Math.max(dur, 0.4) + 1.0);
+      osc.connect(env);
+      if (pan) {
+        pan.pan.value = (i % 2 === 0) ? 0.15 : -0.15;
+        env.connect(pan);
+        pan.connect(out);
+      } else {
+        env.connect(out);
+      }
+      osc.start(when);
+      osc.stop(when + dur + 1.5);
     }
-    buf[startIdx + i] += s * env * (80 / 127);
-  }
-}
-
-function renderEvents(events, nSamples, gain) {
-  const buf = new Float32Array(nSamples);
-  for (const ev of events) {
-    const startIdx = Math.floor(ev.start * SEC_PER_BEAT * SAMPLE_RATE);
-    if (startIdx >= nSamples) continue;
-    const durSec = ev.dur * SEC_PER_BEAT + 0.15;
-    renderNote(ev.pitch, durSec, buf, startIdx);
-  }
-  for (let i = 0; i < nSamples; i++) buf[i] *= gain;
-  return buf;
-}
-
-function renderToAudioBuffer(ctx, mel, bass) {
-  const totalBeats = 16 * 3;
-  const totalSec = totalBeats * SEC_PER_BEAT + 1.0;
-  const n = Math.floor(totalSec * SAMPLE_RATE);
-  const melBuf = renderEvents(mel, n, 0.70);
-  const bassBuf = renderEvents(bass, n, 0.55);
-  // mix + normalise
-  let peak = 0;
-  for (let i = 0; i < n; i++) {
-    melBuf[i] += bassBuf[i];
-    if (Math.abs(melBuf[i]) > peak) peak = Math.abs(melBuf[i]);
-  }
-  if (peak > 0) {
-    const scale = 0.88 / peak;
-    for (let i = 0; i < n; i++) melBuf[i] *= scale;
-  }
-  const ab = ctx.createBuffer(1, n, SAMPLE_RATE);
-  ab.copyToChannel(melBuf, 0);
-  return ab;
-}
-
-// ---------- UI ----------
-function loadJSON(url) {
-  return fetch(url).then(r => r.json());
-}
-
-function el(id) { return document.getElementById(id); }
-
-function log(msg, append = false) {
-  const box = el('console');
-  if (!box) return;
-  if (append) box.textContent += msg + '\n';
-  else box.textContent = msg + '\n';
-  box.scrollTop = box.scrollHeight;
-}
-
-function ensureAudio() {
-  if (!audioCtx) {
-    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-  }
-  if (audioCtx.state === 'suspended') audioCtx.resume();
-}
-
-function stopPlayback() {
-  if (currentSource) {
-    try { currentSource.stop(); } catch (e) {}
-    currentSource = null;
-  }
-}
-
-async function rollAndPlay() {
-  ensureAudio();
-  stopPlayback();
-
-  const dist = el('dist').value;
-  let seed = parseInt(el('seed').value, 10);
-  if (!isFinite(seed)) {
-    seed = Math.floor(Math.random() * 2 ** 31);
-    el('seed').value = seed;
   }
 
-  const { indices, mel, bass } = generate(dist, seed);
-  el('indices').textContent = indices.map(i => i + 1).join(', ');
-
-  const lang = document.body.dataset.lang || 'en';
-  const rollingMsg = {
-    en: `Rolling under ${dist} P, seed ${seed}…`,
-    kr: `${dist === 'uniform' ? '균등' : '삼각'} 분포, seed ${seed}로 굴리는 중…`,
-  }[lang];
-  log(rollingMsg);
-
-  const ab = renderToAudioBuffer(audioCtx, mel, bass);
-  const src = audioCtx.createBufferSource();
-  src.buffer = ab;
-  src.connect(audioCtx.destination);
-  src.start();
-  currentSource = src;
-  log({
-    en: `Playing ${ab.duration.toFixed(1)} s of newly generated minuet.`,
-    kr: `새로 생성된 ${ab.duration.toFixed(1)}초 미뉴에트를 재생합니다.`,
-  }[lang], true);
-  src.onended = () => { currentSource = null; };
-}
-
-function randomSeed() {
-  el('seed').value = Math.floor(Math.random() * 999999);
-}
-
-function setLanguage(lang) {
-  document.body.dataset.lang = lang;
-  document.querySelectorAll('[data-en]').forEach(node => {
-    const en = node.dataset.en;
-    const kr = node.dataset.kr;
-    node.textContent = (lang === 'kr' && kr) ? kr : en;
-  });
-  document.querySelectorAll('.lang-btn').forEach(b => {
-    b.classList.toggle('active', b.dataset.setLang === lang);
-  });
-}
-
-// ---------- init ----------
-window.addEventListener('DOMContentLoaded', async () => {
-  try {
-    const data = await loadJSON('js/bars.json');
-    TABLE = data.table;
-    OPTIONS_PER_BAR = data.options_per_bar;
-    el('status').textContent = `Σ loaded: ${data.n_bars} bars, option counts [${data.options_per_bar.join(', ')}].`;
-    el('btn-roll').disabled = false;
-  } catch (e) {
-    el('status').textContent = 'Failed to load bars.json: ' + e.message;
-    console.error(e);
+  function play(events, secPerBeat, gain) {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const t0 = audioCtx.currentTime + 0.05;
+    for (const [sb, p, db] of events) {
+      scheduleNote(audioCtx, t0 + sb * secPerBeat, p, db, secPerBeat, gain);
+    }
   }
 
-  el('btn-roll').addEventListener('click', rollAndPlay);
-  el('btn-stop').addEventListener('click', stopPlayback);
-  el('btn-random-seed').addEventListener('click', randomSeed);
+  async function playRealisation(seed, dist) {
+    await loadBars();
+    const { chosen, mel, bass } = generate(dist, seed);
+    const secPerBeat = 60 / BARS.tempo_bpm;
+    play(mel,  secPerBeat, 0.18);
+    play(bass, secPerBeat, 0.12);
+    return chosen;
+  }
 
-  document.querySelectorAll('.lang-btn').forEach(b => {
-    b.addEventListener('click', () => setLanguage(b.dataset.setLang));
-  });
+  // ------------------------------------------------------------------ wire-up
+  function wireUI() {
+    const btn  = document.getElementById("playBtn");
+    const seed = document.getElementById("seedInput");
+    const dist = document.getElementById("distSelect");
+    const out  = document.getElementById("chosenOut");
+    if (!btn) return;
+    btn.addEventListener("click", async () => {
+      const s = parseInt((seed && seed.value) || "42", 10);
+      const d = (dist && dist.value) || "triangular";
+      const chosen = await playRealisation(s, d);
+      if (out) out.textContent = "chosen archetype indices: " +
+        JSON.stringify(chosen.map(i => i + 1));
+    });
+  }
 
-  setLanguage('en');
-});
+  if (document.readyState === "loading")
+    document.addEventListener("DOMContentLoaded", wireUI);
+  else
+    wireUI();
+
+  // expose for host pages
+  window.k516f = { generate, playRealisation, loadBars };
+})();

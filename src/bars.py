@@ -1,192 +1,166 @@
 """
-bars.py  —  Schematic K.516f bar table.
+bars.py  —  Σ alphabet and Φ feasibility constraints for K.516f.
 
-This module supplies an 11 x 16 table of one-bar minuet fragments in
-C major, 3/4 metre. It is a **structural demonstration** of the K.516f
-modular alphabet Σ: it preserves the historically-documented slot shape
-(14 positions with 11 options, position 8 with 2 options for the half
-cadence, position 16 with 1 option for the authentic cadence) but the
-bar content itself is *not* transcribed from the Simrock 1792 plates.
-Swapping in Simrock's bars — e.g., from Zaslaw (1992) or Nierhaus
-(2009) — only requires replacing the tables below; the generator and
-entropy code are bar-agnostic.
+Encodes the 11 × 16 schematic bar table of the Musikalisches Würfelspiel
+(K.516f / K. Anh. 294d, Simrock, Bonn 1792).
 
-Representation
---------------
-Each bar is a dict with two voices:
-  melody : list of (midi_pitch, duration_in_beats)
-  bass   : list of (midi_pitch, duration_in_beats)
+Each cell is a *schematic* idiomatic-Mozart bar: a 3/4 measure with a
+melodic top voice (4–6 events) and a bass voice (2–3 events), in C major
+or G major (V), staying inside the 8 + 8 minuet form (16 bars total).
 
-Durations are given in *quarter-note beats* (3.0 per bar for 3/4).
-The sum of durations in each voice equals 3.0.
+This is **not** a transcription of the historical print: the goal is to
+illustrate the combinatorial structure |Σ| = 11¹⁴ × 2 × 1 and the
+specification entropy H ≈ 46.842 bits, not to reproduce the 1792 score
+note-for-note (which is in the public domain and freely available — see
+the `figures/Figure1_K516f_Table.jpg` plate).
+
+Pitches are MIDI numbers (C4 = 60). Times are in beats inside the bar
+(0–3 for 3/4 metre).
+
+Bar position semantics follow the historical table:
+  - bars 1–7  and 9–15  : 11 alternatives each (dice sums 2..12)  →  pos_alts = 11
+  - bar 8                : 2 alternatives  (cadential half-cadence)
+  - bar 16               : 1 alternative   (final tonic cadence)
+  → |Σ| = 11¹⁴ × 2 × 1 = 759,499,667,166,482
+
+The 22 + 1 hand-written archetypes below are mixed into the 11 × 16 grid
+by a deterministic schematic mapping; this is enough to hear the
+combinatorial mechanism. Replacing this stub with a transcription of the
+1792 plate is left as an exercise for the reader.
 """
 
-# --------------------------------------------------------------------------
-# Helpers for readable note names
-# --------------------------------------------------------------------------
-_BASE = {'C': 0, 'D': 2, 'E': 4, 'F': 5, 'G': 7, 'A': 9, 'B': 11}
+from __future__ import annotations
 
-def n(name):
-    """Parse 'C4', 'F#5', 'Bb3' → MIDI pitch (C4 = 60)."""
-    if name[1] in '#b':
-        step, accidental, octave = name[0], name[1], name[2:]
-    else:
-        step, accidental, octave = name[0], '', name[1:]
-    pc = _BASE[step] + (1 if accidental == '#' else -1 if accidental == 'b' else 0)
-    return 12 * (int(octave) + 1) + pc
+KEY_C = 0       # C major
+KEY_G = 7       # G major (V)
 
 
-# --------------------------------------------------------------------------
-# Harmonic plan per bar position (1-indexed to match historical layout)
-# --------------------------------------------------------------------------
-# Typical minuet: 8-bar A phrase (half cadence on V) + 8-bar B phrase (PAC on I).
-#   bar  1-3 : tonic-region
-#   bar  4   : pre-dominant
-#   bar  5-6 : tonic / V
-#   bar  7   : pre-dominant
-#   bar  8   : V (half cadence)   — 2 options
-#   bar  9-11: tonic-region development
-#   bar 12   : pre-dominant
-#   bar 13-14: tonic / V
-#   bar 15   : V (pre-final)
-#   bar 16   : V → I (PAC)        — 1 option
+# --- 23 melodic archetypes (top voice, 3/4 bar) ------------------------------
+# Each archetype is a list of (start_beat, midi_pitch, dur_beats)
 
-# --------------------------------------------------------------------------
-# 11 stock melodic figures per bar position, built as variations on the
-# chord-tone set of that bar's harmony. Bass line is a steady I/IV/V
-# outline in the low register (simulating a left-hand continuo).
-# --------------------------------------------------------------------------
-
-def _variations(chord_tones, bass_notes):
-    """Generate 11 distinct one-bar (3/4) melodic variations from a set
-    of chord tones. All voices sum to 3 beats. Returns list[dict]."""
-    ct = chord_tones
-    # Ensure we have at least 5 tones to cycle through
-    while len(ct) < 5:
-        ct = ct + [p + 12 for p in ct[:5 - len(ct)]]
-    a, b, c, d, e = ct[0], ct[1], ct[2], ct[3 % len(ct)], ct[4 % len(ct)]
-
-    figures = [
-        # v1: three quarter notes, root-third-fifth
-        [(a, 1.0), (b, 1.0), (c, 1.0)],
-        # v2: quarter + two eighths + quarter
-        [(a, 1.0), (b, 0.5), (c, 0.5), (b, 1.0)],
-        # v3: dotted-quarter + eighth + quarter
-        [(a, 1.5), (b, 0.5), (c, 1.0)],
-        # v4: ascending scalar
-        [(a, 1.0), (c, 1.0), (d, 1.0)],
-        # v5: descending scalar
-        [(e, 1.0), (c, 1.0), (a, 1.0)],
-        # v6: leap + step + leap
-        [(a, 1.0), (d, 1.0), (b, 1.0)],
-        # v7: neighbour motion
-        [(c, 1.0), (b, 0.5), (c, 0.5), (a, 1.0)],
-        # v8: arpeggio figure
-        [(a, 0.5), (c, 0.5), (e, 1.0), (c, 1.0)],
-        # v9: long-short-short-short-long (minuet rhythm)
-        [(a, 1.0), (b, 0.5), (c, 0.5), (d, 1.0)],
-        # v10: suspension figure
-        [(d, 1.5), (c, 0.5), (b, 1.0)],
-        # v11: cadential turn
-        [(c, 0.5), (d, 0.5), (c, 0.5), (b, 0.5), (a, 1.0)],
-    ]
-
-    # Bass: tonic on beat 1, chord continuation on beat 2
-    bass = [(bass_notes[0], 1.0),
-            (bass_notes[1 % len(bass_notes)], 1.0),
-            (bass_notes[2 % len(bass_notes)], 1.0)]
-
-    return [{"melody": fig, "bass": list(bass)} for fig in figures]
-
-
-# --------------------------------------------------------------------------
-# Chord-tone sets per bar position (C major)
-#   I   = C, E, G, C, E          root C3
-#   ii  = D, F, A, D, F          root D3
-#   IV  = F, A, C, F, A          root F3
-#   V   = G, B, D, G, B          root G2
-#   vi  = A, C, E, A, C          root A2
-# --------------------------------------------------------------------------
-
-def _ct(*names):
-    return [n(x) for x in names]
-
-HARM = {
-    'I'  : dict(mel=_ct('C5', 'E5', 'G5', 'C6', 'E6'),
-                bass=_ct('C3', 'E3', 'G3')),
-    'IV' : dict(mel=_ct('F5', 'A5', 'C6', 'F6', 'A6'),
-                bass=_ct('F3', 'A3', 'C4')),
-    'V'  : dict(mel=_ct('G5', 'B5', 'D6', 'G6', 'B6'),
-                bass=_ct('G2', 'B2', 'D3')),
-    'V7' : dict(mel=_ct('G5', 'B5', 'D6', 'F6', 'G6'),
-                bass=_ct('G2', 'B2', 'F3')),
-    'ii' : dict(mel=_ct('D5', 'F5', 'A5', 'D6', 'F6'),
-                bass=_ct('D3', 'F3', 'A3')),
-    'vi' : dict(mel=_ct('A4', 'C5', 'E5', 'A5', 'C6'),
-                bass=_ct('A2', 'C3', 'E3')),
-}
-
-# Harmonic plan: 16 bars
-BAR_HARMONY = [
-    'I',   # 1
-    'I',   # 2
-    'vi',  # 3
-    'IV',  # 4  pre-dominant
-    'I',   # 5
-    'V',   # 6
-    'ii',  # 7  pre-dominant
-    'V',   # 8  HALF CADENCE — two options
-    'I',   # 9
-    'vi',  # 10
-    'I',   # 11
-    'IV',  # 12 pre-dominant
-    'I',   # 13
-    'V7',  # 14
-    'V7',  # 15
-    'I',   # 16 PAC — one option
+_MEL_ARCH = [
+    # 0: tonic arpeggio up
+    [(0.0, 72, 1.0), (1.0, 76, 0.5), (1.5, 79, 0.5), (2.0, 84, 1.0)],
+    # 1: dominant scalar descent
+    [(0.0, 79, 0.5), (0.5, 77, 0.5), (1.0, 76, 1.0), (2.0, 74, 0.5), (2.5, 72, 0.5)],
+    # 2: turn figure on tonic
+    [(0.0, 76, 0.5), (0.5, 77, 0.5), (1.0, 76, 0.5), (1.5, 74, 0.5), (2.0, 76, 1.0)],
+    # 3: leap up + step down
+    [(0.0, 72, 0.5), (0.5, 79, 0.5), (1.0, 77, 0.5), (1.5, 76, 0.5), (2.0, 74, 1.0)],
+    # 4: alberti-like top
+    [(0.0, 72, 0.5), (0.5, 76, 0.5), (1.0, 79, 0.5), (1.5, 76, 0.5), (2.0, 84, 1.0)],
+    # 5: dotted figure
+    [(0.0, 76, 0.75), (0.75, 77, 0.25), (1.0, 79, 1.0), (2.0, 76, 1.0)],
+    # 6: passing-tone descent
+    [(0.0, 79, 1.0), (1.0, 77, 0.5), (1.5, 76, 0.5), (2.0, 74, 0.5), (2.5, 72, 0.5)],
+    # 7: half-step neighbor
+    [(0.0, 76, 0.5), (0.5, 77, 0.5), (1.0, 76, 1.0), (2.0, 79, 1.0)],
+    # 8: triplet sweep
+    [(0.0, 72, 1.0), (1.0, 76, 0.333), (1.333, 79, 0.333), (1.667, 84, 0.333), (2.0, 79, 1.0)],
+    # 9: V chord arpeggio
+    [(0.0, 67, 1.0), (1.0, 71, 0.5), (1.5, 74, 0.5), (2.0, 79, 1.0)],
+    # 10: V7 leading
+    [(0.0, 74, 0.5), (0.5, 77, 0.5), (1.0, 79, 1.0), (2.0, 77, 1.0)],
+    # 11: I64 figure
+    [(0.0, 72, 0.5), (0.5, 76, 0.5), (1.0, 79, 1.0), (2.0, 76, 1.0)],
+    # 12: two-voice imitation start
+    [(0.0, 79, 0.5), (0.5, 76, 0.5), (1.0, 79, 0.5), (1.5, 76, 0.5), (2.0, 72, 1.0)],
+    # 13: cantabile leap
+    [(0.0, 84, 1.0), (1.0, 79, 0.5), (1.5, 76, 0.5), (2.0, 72, 1.0)],
+    # 14: stepwise rise
+    [(0.0, 72, 0.5), (0.5, 74, 0.5), (1.0, 76, 0.5), (1.5, 77, 0.5), (2.0, 79, 1.0)],
+    # 15: stepwise fall
+    [(0.0, 79, 0.5), (0.5, 77, 0.5), (1.0, 76, 0.5), (1.5, 74, 0.5), (2.0, 72, 1.0)],
+    # 16: held + flourish
+    [(0.0, 76, 1.5), (1.5, 79, 0.5), (2.0, 76, 0.5), (2.5, 72, 0.5)],
+    # 17: appoggiatura
+    [(0.0, 77, 0.25), (0.25, 76, 0.75), (1.0, 79, 1.0), (2.0, 72, 1.0)],
+    # 18: motif repetition
+    [(0.0, 76, 0.5), (0.5, 79, 0.5), (1.0, 76, 0.5), (1.5, 79, 0.5), (2.0, 72, 1.0)],
+    # 19: sequence step
+    [(0.0, 74, 0.5), (0.5, 76, 0.5), (1.0, 77, 0.5), (1.5, 79, 0.5), (2.0, 81, 1.0)],
+    # 20: half-cadence approach    (used at bar 8)
+    [(0.0, 76, 0.5), (0.5, 74, 0.5), (1.0, 71, 1.0), (2.0, 67, 1.0)],
+    # 21: half-cadence approach v2 (alt for bar 8)
+    [(0.0, 79, 0.5), (0.5, 77, 0.5), (1.0, 74, 1.0), (2.0, 67, 1.0)],
+    # 22: final cadence I (used at bar 16)
+    [(0.0, 76, 0.5), (0.5, 74, 0.5), (1.0, 72, 1.0), (2.0, 72, 1.0)],
 ]
 
-# --------------------------------------------------------------------------
-# Build the 11 x 16 table
-# --------------------------------------------------------------------------
-TABLE = []  # TABLE[bar_idx][option_idx] → bar dict
+# --- 23 bass archetypes (bottom voice) ---------------------------------------
 
-for idx, harm in enumerate(BAR_HARMONY, start=1):
-    h = HARM[harm]
-    variants = _variations(h['mel'], h['bass'])
+_BASS_ARCH = [
+    [(0.0, 36, 1.0), (1.0, 43, 1.0), (2.0, 48, 1.0)],          # 0
+    [(0.0, 43, 1.0), (1.0, 47, 1.0), (2.0, 50, 1.0)],          # 1
+    [(0.0, 48, 1.0), (1.0, 52, 1.0), (2.0, 48, 1.0)],          # 2
+    [(0.0, 36, 1.5), (1.5, 43, 1.5)],                          # 3
+    [(0.0, 36, 1.0), (1.0, 48, 1.0), (2.0, 52, 1.0)],          # 4
+    [(0.0, 43, 1.0), (1.0, 50, 1.0), (2.0, 47, 1.0)],          # 5
+    [(0.0, 48, 1.0), (1.0, 43, 1.0), (2.0, 36, 1.0)],          # 6
+    [(0.0, 41, 1.0), (1.0, 45, 1.0), (2.0, 48, 1.0)],          # 7
+    [(0.0, 36, 0.5), (0.5, 43, 0.5), (1.0, 48, 1.0), (2.0, 52, 1.0)],  # 8
+    [(0.0, 43, 1.5), (1.5, 50, 1.5)],                          # 9
+    [(0.0, 50, 1.0), (1.0, 43, 1.0), (2.0, 47, 1.0)],          # 10
+    [(0.0, 48, 1.0), (1.0, 43, 1.0), (2.0, 48, 1.0)],          # 11
+    [(0.0, 43, 1.0), (1.0, 50, 1.0), (2.0, 43, 1.0)],          # 12
+    [(0.0, 36, 1.0), (1.0, 40, 1.0), (2.0, 43, 1.0)],          # 13
+    [(0.0, 36, 1.5), (1.5, 48, 1.5)],                          # 14
+    [(0.0, 41, 1.0), (1.0, 38, 1.0), (2.0, 43, 1.0)],          # 15
+    [(0.0, 48, 1.0), (1.0, 50, 1.0), (2.0, 43, 1.0)],          # 16
+    [(0.0, 36, 1.0), (1.0, 43, 1.0), (2.0, 36, 1.0)],          # 17
+    [(0.0, 43, 1.0), (1.0, 36, 1.0), (2.0, 43, 1.0)],          # 18
+    [(0.0, 38, 1.0), (1.0, 41, 1.0), (2.0, 45, 1.0)],          # 19
+    [(0.0, 43, 1.0), (1.0, 47, 1.0), (2.0, 43, 1.0)],          # 20  half-cadence on V
+    [(0.0, 50, 1.0), (1.0, 43, 1.0), (2.0, 43, 1.0)],          # 21  half-cadence on V (v2)
+    [(0.0, 36, 1.5), (1.5, 36, 1.5)],                          # 22  final tonic
+]
 
-    if idx == 8:
-        # half-cadence bar: two options only (V and V7 flavours)
-        v_variants = _variations(HARM['V']['mel'], HARM['V']['bass'])
-        v7_variants = _variations(HARM['V7']['mel'], HARM['V7']['bass'])
-        TABLE.append([v_variants[0], v7_variants[5]])
 
-    elif idx == 16:
-        # authentic cadence bar: one option, fixed V→I motion
-        cadence = {
-            "melody": [(n('D5'), 1.0), (n('E5'), 1.0), (n('C5'), 1.0)],
-            "bass":   [(n('G2'), 1.0), (n('G2'), 1.0), (n('C3'), 1.0)],
-        }
-        TABLE.append([cadence])
-
-    else:
-        # 11 options, drawn from the bar's harmony
-        TABLE.append(variants)
+def _pos_alts(bar_position: int) -> int:
+    """Number of alternatives Φ allows at bar position (1..16)."""
+    if bar_position == 8:
+        return 2
+    if bar_position == 16:
+        return 1
+    return 11
 
 
-# --------------------------------------------------------------------------
-# Public constants for the generator
-# --------------------------------------------------------------------------
+def alphabet_at(bar_position: int) -> list[int]:
+    """Return list of feasible *archetype indices* at this bar position."""
+    if bar_position == 8:
+        return [20, 21]
+    if bar_position == 16:
+        return [22]
+    # 11 alternatives drawn deterministically from the 20-archetype pool
+    base = (bar_position - 1) * 7  # rotate so different bars feel different
+    return [(base + i) % 20 for i in range(11)]
+
+
+def get_bar(archetype_idx: int) -> tuple[list, list]:
+    """Return (melody, bass) event lists for a given archetype index."""
+    return _MEL_ARCH[archetype_idx], _BASS_ARCH[archetype_idx]
+
+
+def sigma_size() -> int:
+    """|Σ| = product of pos_alts over all 16 bar positions."""
+    n = 1
+    for b in range(1, 17):
+        n *= _pos_alts(b)
+    return n
+
+
+# Public constants used by generator and entropy modules
 N_BARS = 16
-OPTIONS_PER_BAR = [len(TABLE[i]) for i in range(N_BARS)]
-assert OPTIONS_PER_BAR == [11] * 7 + [2] + [11] * 7 + [1], OPTIONS_PER_BAR
+TIME_SIG_NUM = 3
+TIME_SIG_DEN = 4
+KEY_OF_PIECE = KEY_C
+SIGMA_SIZE = sigma_size()  # 759,499,667,166,482
 
 
 if __name__ == "__main__":
     # quick self-test
-    print(f"{N_BARS} bars; option counts per bar: {OPTIONS_PER_BAR}")
-    total = 1
-    for k in OPTIONS_PER_BAR:
-        total *= k
-    print(f"Total realisations: {total:,}")
-    # structural check: 11^14 * 2 * 1 = 7.595 × 10^14
+    assert SIGMA_SIZE == 11 ** 14 * 2 * 1, f"|Σ| mismatch: {SIGMA_SIZE}"
+    print(f"|Σ| = {SIGMA_SIZE:,}  ({SIGMA_SIZE:.3e})")
+    print(f"     = 11¹⁴ × 2 × 1 = {11**14 * 2 * 1:,}  OK")
+    for b in (1, 7, 8, 9, 15, 16):
+        print(f"  bar {b:>2}: {_pos_alts(b)} alternatives")

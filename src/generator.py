@@ -1,189 +1,214 @@
 """
-generator.py  —  R-C-M-R framework, instantiated for the K.516f case.
+generator.py  —  P (probability distribution) and γ (composition operator).
 
-Realises the quadruple  G = ⟨Σ, P, Φ, γ⟩  with:
+For each of the 16 bar positions, a distribution P over the position's
+feasible archetype set is sampled, and γ concatenates the chosen bars
+into a 3/4 minuet. A Standard MIDI File (SMF) is written using a small
+inline writer (no external MIDI library required).
 
-  Σ  : the 11 × 16 modular bar table in bars.TABLE
-  P  : a chooseable probability distribution over bar indices
-       (either 'uniform' or 'triangular' — two dice summed, per 1792 rules)
-  Φ  : the positional constraint (bar 8 → 2 options; bar 16 → 1 option)
-  γ  : concatenation (each bar placed end-to-end in 3/4 time)
-
-This script is pure-Python and stdlib-only (+ numpy for Monte Carlo
-elsewhere). It writes a standards-compliant Standard MIDI File (SMF
-format 0, one track).
+Two distributions are supported:
+    --dist uniform     : P(x) = 1/k   (modern AI-music default prior)
+    --dist triangular  : the historical 2-dice sum prior  (1/36, 2/36, ...,
+                          6/36, ..., 1/36)
 
 Usage:
-    python generator.py --dist uniform    --seed 42 --out out.mid
-    python generator.py --dist triangular --seed 42 --out out.mid
+    python generator.py --dist triangular --seed 42 --out outputs/run.mid
 """
 
 from __future__ import annotations
 import argparse
-import random
 import struct
 from pathlib import Path
-from typing import List, Tuple
+
+import numpy as np
 
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from bars import TABLE, N_BARS, OPTIONS_PER_BAR
+from bars import (
+    alphabet_at,
+    get_bar,
+    N_BARS,
+    TIME_SIG_NUM,
+    TIME_SIG_DEN,
+    SIGMA_SIZE,
+)
+
+PPQ = 480                                     # ticks per quarter note
+TEMPO_MICROSEC_PER_QUARTER = 600_000          # 100 BPM
+DEFAULT_VELOCITY_MEL = 92
+DEFAULT_VELOCITY_BASS = 78
 
 
-# --------------------------------------------------------------------------
-# The probability slot P
-# --------------------------------------------------------------------------
-def choose_bar_index(bar_position: int, dist: str, rng: random.Random) -> int:
-    """Return a 0-indexed bar option for `bar_position` (1-indexed) under
-    distribution `dist`. For positions with <11 options (8, 16) the choice
-    is folded into the available options."""
-    n_options = OPTIONS_PER_BAR[bar_position - 1]
+# ----------------------------------------------------------------------
+# P  —  distributions
+# ----------------------------------------------------------------------
 
-    if dist == "uniform":
-        # Each option equally likely.
-        return rng.randrange(n_options)
-
-    if dist == "triangular":
-        # Historical two-dice sum: values 2..12, triangular.
-        # Map to table indices 1..11 by subtracting 1.
-        s = rng.randint(1, 6) + rng.randint(1, 6)  # 2..12
-        idx = s - 2  # 0..10
-        if idx >= n_options:
-            # bars 8 and 16: truncate via modulo into the smaller option set
-            idx = idx % n_options
-        return idx
-
-    raise ValueError(f"unknown distribution {dist!r}")
+def _triangular_2d(k: int) -> np.ndarray:
+    """Triangular distribution as in the historical 2-dice sum, restricted
+    to k alternatives. For k = 11 this is exactly the (1,2,3,4,5,6,5,4,3,
+    2,1)/36 pmf used by Mozart's table."""
+    if k == 11:
+        w = np.array([1, 2, 3, 4, 5, 6, 5, 4, 3, 2, 1], dtype=np.float64)
+    elif k == 2:
+        w = np.array([1, 1], dtype=np.float64)
+    elif k == 1:
+        w = np.array([1], dtype=np.float64)
+    else:
+        # generic symmetric triangular
+        mid = (k - 1) / 2.0
+        w = np.array([mid - abs(i - mid) + 1 for i in range(k)], dtype=np.float64)
+    return w / w.sum()
 
 
-# --------------------------------------------------------------------------
-# The composition operator γ  :  concatenation in 3/4
-# --------------------------------------------------------------------------
-def assemble(indices: List[int]):
-    """Given a list of 16 bar option indices, return a tuple
-    (melody_events, bass_events) where each event is
-    (start_beat, midi_pitch, duration_beats). Beats accumulate across bars."""
-    mel, bass = [], []
-    t = 0.0
-    for bar_pos, opt_idx in enumerate(indices, start=1):
-        bar = TABLE[bar_pos - 1][opt_idx]
-        # melody
-        bt = t
-        for pitch, dur in bar["melody"]:
-            mel.append((bt, pitch, dur))
-            bt += dur
-        # bass
-        bt = t
-        for pitch, dur in bar["bass"]:
-            bass.append((bt, pitch, dur))
-            bt += dur
-        t += 3.0  # advance one 3/4 bar
-    return mel, bass
+def _uniform(k: int) -> np.ndarray:
+    return np.full(k, 1.0 / k, dtype=np.float64)
 
+
+def distribution_for(bar_position: int, dist_name: str) -> np.ndarray:
+    """Return the pmf over feasible archetypes for this bar position."""
+    k = len(alphabet_at(bar_position))
+    if dist_name == "triangular":
+        return _triangular_2d(k)
+    if dist_name == "uniform":
+        return _uniform(k)
+    raise ValueError(f"unknown dist {dist_name!r}")
+
+
+# ----------------------------------------------------------------------
+# γ  —  composition operator
+# ----------------------------------------------------------------------
 
 def generate(dist: str, seed: int):
-    rng = random.Random(seed)
-    indices = [choose_bar_index(i, dist, rng) for i in range(1, N_BARS + 1)]
-    mel, bass = assemble(indices)
-    return indices, mel, bass
+    """Sample one realisation of the dice game.
+
+    Returns:
+        chosen_indices : list[int] of archetype indices (length 16)
+        melody_events  : list of (start_beat_global, midi_pitch, dur_beats)
+        bass_events    : list of (start_beat_global, midi_pitch, dur_beats)
+    """
+    rng = np.random.default_rng(seed)
+    chosen_indices = []
+    mel_events, bass_events = [], []
+    for bar_pos in range(1, N_BARS + 1):
+        feasible = alphabet_at(bar_pos)
+        pmf = distribution_for(bar_pos, dist)
+        choice = int(rng.choice(len(feasible), p=pmf))
+        archetype_idx = feasible[choice]
+        chosen_indices.append(archetype_idx)
+        mel, bass = get_bar(archetype_idx)
+        bar_offset = (bar_pos - 1) * TIME_SIG_NUM   # 3 beats per bar
+        for (s, p, d) in mel:
+            mel_events.append((bar_offset + s, p, d))
+        for (s, p, d) in bass:
+            bass_events.append((bar_offset + s, p, d))
+    return chosen_indices, mel_events, bass_events
 
 
-# --------------------------------------------------------------------------
-# Minimal Standard MIDI File writer  (no external deps)
-# --------------------------------------------------------------------------
-TICKS_PER_QUARTER = 480
-TEMPO_MICROSEC_PER_QUARTER = 600_000   # 100 BPM, gentle minuet tempo
+# ----------------------------------------------------------------------
+# Standard MIDI File writer  (Type 1, inline, no dependencies)
+# ----------------------------------------------------------------------
 
 def _vlq(n: int) -> bytes:
-    """Variable-length quantity encoding (used for MIDI delta times)."""
+    """Variable-length quantity encoding."""
+    if n < 0:
+        raise ValueError("VLQ requires non-negative")
     if n == 0:
         return b"\x00"
-    buf = []
-    buf.append(n & 0x7F)
+    out = []
+    out.append(n & 0x7F)
     n >>= 7
     while n:
-        buf.append((n & 0x7F) | 0x80)
+        out.append((n & 0x7F) | 0x80)
         n >>= 7
-    return bytes(reversed(buf))
+    return bytes(reversed(out))
 
 
-def _meta(meta_type: int, data: bytes) -> bytes:
-    return b"\xff" + bytes([meta_type]) + _vlq(len(data)) + data
+def _meta(tag: int, data: bytes) -> bytes:
+    return b"\xFF" + bytes([tag]) + _vlq(len(data)) + data
 
 
-def write_midi(mel, bass, out_path: Path):
-    """Write melody + bass to a format-0 SMF."""
-    # Consolidate all events as (tick, [status, data1, data2])
-    events = []
-
-    for start, pitch, dur in mel:
-        t0 = int(round(start * TICKS_PER_QUARTER))
-        t1 = int(round((start + dur) * TICKS_PER_QUARTER))
-        events.append((t0, [0x90, pitch, 88]))   # note_on melody, vel 88
-        events.append((t1, [0x80, pitch, 0]))    # note_off
-
-    for start, pitch, dur in bass:
-        t0 = int(round(start * TICKS_PER_QUARTER))
-        t1 = int(round((start + dur) * TICKS_PER_QUARTER))
-        events.append((t0, [0x91, pitch, 70]))   # note_on bass (ch 2), vel 70
-        events.append((t1, [0x81, pitch, 0]))
-
-    # Stable sort: earlier tick first; for ties, note_off before note_on
-    events.sort(key=lambda e: (e[0], 0 if e[1][0] & 0xF0 == 0x80 else 1))
-
-    # --- track bytes ---
-    track = bytearray()
-    # tempo meta
-    tempo_data = TEMPO_MICROSEC_PER_QUARTER.to_bytes(3, "big")
-    track += _vlq(0) + _meta(0x51, tempo_data)
-    # time signature 3/4 (meta 0x58: numer, denom-pow2, clocks/click=24, 32nd/quarter=8)
-    track += _vlq(0) + _meta(0x58, bytes([3, 2, 24, 8]))
-    # key signature C major: sharps=0, major=0
-    track += _vlq(0) + _meta(0x59, bytes([0, 0]))
-    # programme change for both channels (ch 0 = piano, ch 1 = piano)
-    track += _vlq(0) + bytes([0xC0, 0])   # ch 0 → Acoustic Grand
-    track += _vlq(0) + bytes([0xC1, 0])   # ch 1 → Acoustic Grand
-
-    # note events
-    prev_tick = 0
-    for tick, msg in events:
-        delta = tick - prev_tick
-        track += _vlq(delta) + bytes(msg)
-        prev_tick = tick
-
-    # end-of-track
-    track += _vlq(0) + _meta(0x2F, b"")
-
-    # --- header + track chunks ---
-    header = b"MThd" + (6).to_bytes(4, "big") + \
-             (0).to_bytes(2, "big") + \
-             (1).to_bytes(2, "big") + \
-             TICKS_PER_QUARTER.to_bytes(2, "big")
-    chunk = b"MTrk" + len(track).to_bytes(4, "big") + bytes(track)
-
-    out_path.write_bytes(header + chunk)
+def _track_chunk(events_with_dt: list[bytes]) -> bytes:
+    body = b"".join(events_with_dt)
+    body += _vlq(0) + _meta(0x2F, b"")     # End-of-track
+    return b"MTrk" + struct.pack(">I", len(body)) + body
 
 
-# --------------------------------------------------------------------------
+def _conductor_track() -> bytes:
+    """Tempo + time signature + key signature on a tempo track."""
+    parts = []
+    # tempo
+    tempo_bytes = TEMPO_MICROSEC_PER_QUARTER.to_bytes(3, "big")
+    parts.append(_vlq(0) + _meta(0x51, tempo_bytes))
+    # time signature 3/4 with 24 MIDI clocks/beat, 8 32nd-notes/quarter
+    ts = bytes([TIME_SIG_NUM, 2, 24, 8])  # 2 = log2(4)
+    parts.append(_vlq(0) + _meta(0x58, ts))
+    # key sig: 0 sharps/flats, major
+    parts.append(_vlq(0) + _meta(0x59, bytes([0, 0])))
+    return _track_chunk(parts)
+
+
+def _events_to_track(events, channel: int, velocity: int, name: bytes) -> bytes:
+    """events: list of (start_beat, pitch, dur_beats)."""
+    # Build tick-stamped on/off list, then sort by absolute tick, then
+    # emit deltas.
+    abs_evs = []  # (tick, kind, pitch)  kind=1 on, 0 off
+    for (sb, p, db) in events:
+        on = int(round(sb * PPQ))
+        off = int(round((sb + db) * PPQ))
+        if off <= on:
+            off = on + 1
+        abs_evs.append((on, 1, p))
+        abs_evs.append((off, 0, p))
+    abs_evs.sort(key=lambda x: (x[0], x[1]))   # off before on at same tick
+
+    body_parts = []
+    body_parts.append(_vlq(0) + _meta(0x03, name))   # track name
+
+    last_tick = 0
+    for (tick, kind, pitch) in abs_evs:
+        dt = max(0, tick - last_tick)
+        last_tick = tick
+        status = (0x90 if kind == 1 else 0x80) | (channel & 0x0F)
+        vel = velocity if kind == 1 else 0
+        body_parts.append(_vlq(dt) + bytes([status, pitch & 0x7F, vel & 0x7F]))
+    return _track_chunk(body_parts)
+
+
+def write_midi(out_path: Path, mel_events, bass_events):
+    """Write a Type-1 SMF with conductor + melody + bass tracks."""
+    header = b"MThd" + struct.pack(">IHHH", 6, 1, 3, PPQ)
+    cond = _conductor_track()
+    mel_trk = _events_to_track(mel_events, channel=0,
+                               velocity=DEFAULT_VELOCITY_MEL, name=b"Melody")
+    bass_trk = _events_to_track(bass_events, channel=1,
+                                velocity=DEFAULT_VELOCITY_BASS, name=b"Bass")
+    out_path.write_bytes(header + cond + mel_trk + bass_trk)
+
+
+# ----------------------------------------------------------------------
 # CLI
-# --------------------------------------------------------------------------
+# ----------------------------------------------------------------------
+
 def main():
-    p = argparse.ArgumentParser()
+    p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--dist", choices=["uniform", "triangular"],
-                   default="triangular",
-                   help="Probability distribution P over bar options")
+                   default="triangular")
     p.add_argument("--seed", type=int, default=42)
-    p.add_argument("--out", required=True)
+    p.add_argument("--out", required=True, help="MIDI output path")
     args = p.parse_args()
 
-    indices, mel, bass = generate(args.dist, args.seed)
-    write_midi(mel, bass, Path(args.out))
+    out = Path(args.out)
+    out.parent.mkdir(parents=True, exist_ok=True)
 
-    print(f"seed={args.seed} dist={args.dist}")
-    print(f"chosen bar indices (1-indexed options):")
-    print("  " + ", ".join(f"{i + 1}" for i in indices))
-    print(f"melody notes: {len(mel)}  |  bass notes: {len(bass)}")
-    print(f"written: {args.out}")
+    indices, mel, bass = generate(args.dist, args.seed)
+    write_midi(out, mel, bass)
+
+    print(f"|Σ| = {SIGMA_SIZE:,}")
+    print(f"dist = {args.dist}   seed = {args.seed}")
+    print(f"chosen archetype indices (1-based bar pos → idx):")
+    for b, idx in enumerate(indices, start=1):
+        print(f"  bar {b:>2}: archetype #{idx}")
+    print(f"written: {out}")
 
 
 if __name__ == "__main__":

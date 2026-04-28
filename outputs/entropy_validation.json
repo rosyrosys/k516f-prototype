@@ -1,23 +1,31 @@
 {
-  "combinatorial_space": {
-    "value": 759499667166482,
-    "scientific": "7.5950e+14",
-    "log2": 49.432042660922164
-  },
-  "theoretical": {
-    "uniform_bits": 49.432,
-    "triangular_bits": 46.8416
-  },
-  "monte_carlo": {
-    "n_samples": 1000000,
-    "uniform_bits": 49.4319,
-    "triangular_bits": 46.8433,
-    "absolute_error_uniform": 0.0001,
-    "absolute_error_triangular": 0.0017
-  },
-  "section3_cross_check": {
-    "paper_reported_bits": 46.842,
-    "generator_triangular_bits": 46.8433,
-    "within_mc_noise_of_paper": true
-  }
+  "dist": "triangular",
+  "n_draws": 200000,
+  "seed": 2026,
+  "sigma_size": 759499667166482,
+  "sigma_size_expected": 759499667166482,
+  "sigma_size_ok": true,
+  "H_closed_form_bits": 46.841627,
+  "H_monte_carlo_bits": 46.838143,
+  "abs_delta_bits": 0.003484,
+  "delta_threshold_bits": 0.01,
+  "delta_ok": true,
+  "per_bar_bits": [
+    3.274402,
+    3.274402,
+    3.274402,
+    3.274402,
+    3.274402,
+    3.274402,
+    3.274402,
+    1.0,
+    3.274402,
+    3.274402,
+    3.274402,
+    3.274402,
+    3.274402,
+    3.274402,
+    3.274402,
+    -0.0
+  ]
 }
